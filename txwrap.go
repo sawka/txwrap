@@ -179,6 +179,12 @@ func (tx *TxWrap) GetInt(query string, args ...interface{}) int {
 	return rtnInt
 }
 
+func (tx *TxWrap) GetInt64(query string, args ...interface{}) int64 {
+	var rtnInt int64
+	tx.Get(&rtnInt, query, args...)
+	return rtnInt
+}
+
 // If there is an error or sql.ErrNoRows will return false, otherwise true.
 // Note that sql.ErrNoRows will *not* error out the TxWrap.
 func (tx *TxWrap) Get(dest interface{}, query string, args ...interface{}) bool {
@@ -256,4 +262,10 @@ func (tx *TxWrap) Run(fn func() error) {
 		tx.Err = err
 	}
 	return
+}
+
+func (tx *TxWrap) SetErr(err error) {
+	if tx.Err == nil {
+		tx.Err = err
+	}
 }
