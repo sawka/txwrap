@@ -156,9 +156,12 @@ func (tx *TxWrap) Exists(query string, args ...interface{}) bool {
 }
 
 func (tx *TxWrap) GetString(query string, args ...interface{}) string {
-	var rtnStr string
+	var rtnStr *string
 	tx.Get(&rtnStr, query, args...)
-	return rtnStr
+	if rtnStr == nil {
+		return ""
+	}
+	return *rtnStr
 }
 
 func (tx *TxWrap) GetBool(query string, args ...interface{}) bool {
@@ -174,15 +177,21 @@ func (tx *TxWrap) SelectStrings(query string, args ...interface{}) []string {
 }
 
 func (tx *TxWrap) GetInt(query string, args ...interface{}) int {
-	var rtnInt int
+	var rtnInt *int
 	tx.Get(&rtnInt, query, args...)
-	return rtnInt
+	if rtnInt == nil {
+		return 0
+	}
+	return *rtnInt
 }
 
 func (tx *TxWrap) GetInt64(query string, args ...interface{}) int64 {
-	var rtnInt int64
+	var rtnInt *int64
 	tx.Get(&rtnInt, query, args...)
-	return rtnInt
+	if rtnInt == nil {
+		return 0
+	}
+	return *rtnInt
 }
 
 // If there is an error or sql.ErrNoRows will return false, otherwise true.
