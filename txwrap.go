@@ -1,4 +1,4 @@
-// Copyright 2023 Mike Sawka
+// Copyright 2023-2024 Michael Sawka
 // MIT License (see LICENSE)
 
 // Simple wrapper around sqlx.Tx to provide error handling and automatic commit/rollback
@@ -11,14 +11,6 @@ import (
 
 	"github.com/jmoiron/sqlx"
 )
-
-// Allows for custom database get/release logic
-// If GetDB returns a DB, ReleaseDB is guaranteed to be called once the
-// transaction has been committed or rolledback.
-type DBGetter interface {
-	GetDB(ctx context.Context) (*sqlx.DB, error)
-	ReleaseDB(*sqlx.DB)
-}
 
 // Main TxWrap data-structure.  Wraps the sqlx.Tx interface.  Once an error
 // is returned from one of the DB calls, no future calls will run and the transaction
@@ -44,27 +36,17 @@ func IsTxWrapContext(ctx context.Context) bool {
 	return ctxVal != nil
 }
 
-// Simple implementation of DBGetter for a sqlx.DB
-type SimpleDBGetter sqlx.DB
-
-func (db *SimpleDBGetter) GetDB(ctx context.Context) (*sqlx.DB, error) {
-	return (*sqlx.DB)(db), nil
-}
-
-func (db *SimpleDBGetter) ReleaseDB(instance *sqlx.DB) {
-}
-
-// Simple transaction wrapper.  If any database call fails, or an error is returned from
-// 'fn' then the transation will be rolled back and the first error will be returned.
-// Otherwise the transaction will be committed and WithTx will return nil.
-//
-// Calls DBGWithTx with 'db' wrapped in SimpleDBGetter
-func WithTx(ctx context.Context, db *sqlx.DB, fn func(tx *TxWrap) error) error {
-	if db == nil {
-		return fmt.Errorf("invalid nil DB passed to WithTx")
-	}
-	dbg := (*SimpleDBGetter)(db)
-	return DBGWithTx(ctx, dbg, fn)
+func WithTxRtn[RT any](ctx context.Context, db *sqlx.DB, fn func(tx *TxWrap) (RT, error)) (RT, error) {
+	var rtn RT
+	txErr := WithTx(ctx, db, func(tx *TxWrap) error {
+		temp, err := fn(tx)
+		if err != nil {
+			return err
+		}
+		rtn = temp
+		return nil
+	})
+	return rtn, txErr
 }
 
 // Main transaction wrapper. If any database call fails, or an error is returned from
@@ -75,7 +57,7 @@ func WithTx(ctx context.Context, db *sqlx.DB, fn func(tx *TxWrap) error) error {
 // return that error.  Otherwise it will use the existing outer TxWrap object.  Note that
 // this will *not* run a nested DB transation.  Begin and Commit/Rollback will only
 // be called once for the *outer* transaction.
-func DBGWithTx(ctx context.Context, dbWrap DBGetter, fn func(tx *TxWrap) error) (rtnErr error) {
+func WithTx(ctx context.Context, db *sqlx.DB, fn func(tx *TxWrap) error) (rtnErr error) {
 	var txWrap *TxWrap
 	ctxVal := ctx.Value(txWrapKey{})
 	if ctxVal != nil {
@@ -85,14 +67,9 @@ func DBGWithTx(ctx context.Context, dbWrap DBGetter, fn func(tx *TxWrap) error) 
 		}
 	}
 	if txWrap == nil {
-		db, getDBErr := dbWrap.GetDB(ctx)
-		if getDBErr != nil {
-			return getDBErr
-		}
 		if db == nil {
-			return fmt.Errorf("GetDB returned nil DB")
+			return fmt.Errorf("invalid nil DB passed to WithTxDB")
 		}
-		defer dbWrap.ReleaseDB(db)
 		tx, beginErr := db.BeginTxx(ctx, nil)
 		if beginErr != nil {
 			return beginErr
@@ -164,10 +141,34 @@ func (tx *TxWrap) GetString(query string, args ...interface{}) string {
 	return *rtnStr
 }
 
+func (tx *TxWrap) GetFloat64(query string, args ...interface{}) float64 {
+	var rtnFloat *float64
+	tx.Get(&rtnFloat, query, args...)
+	if rtnFloat == nil {
+		return 0
+	}
+	return *rtnFloat
+}
+
+func (tx *TxWrap) GetByteArr(query string, args ...interface{}) []byte {
+	var rtnByteArr *[]byte
+	tx.Get(&rtnByteArr, query, args...)
+	if rtnByteArr == nil {
+		return nil
+	}
+	return *rtnByteArr
+}
+
 func (tx *TxWrap) GetBool(query string, args ...interface{}) bool {
 	var rtnBool bool
 	tx.Get(&rtnBool, query, args...)
 	return rtnBool
+}
+
+func GetGeneric[RT any](tx TxWrap, query string, args ...interface{}) RT {
+	var rtn RT
+	tx.Get(&rtn, query, args...)
+	return rtn
 }
 
 func (tx *TxWrap) SelectStrings(query string, args ...interface{}) []string {
@@ -219,7 +220,6 @@ func (tx *TxWrap) Select(dest interface{}, query string, args ...interface{}) {
 	if err != nil {
 		tx.Err = err
 	}
-	return
 }
 
 func (tx *TxWrap) SelectMaps(query string, args ...interface{}) []map[string]interface{} {
@@ -270,7 +270,6 @@ func (tx *TxWrap) Run(fn func() error) {
 	if err != nil {
 		tx.Err = err
 	}
-	return
 }
 
 func (tx *TxWrap) SetErr(err error) {
